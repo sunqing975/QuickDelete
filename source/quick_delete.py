@@ -1,5 +1,5 @@
 """
-QuickDelete v17 — tkinter 主线程进度窗
+QuickDelete v18 — tkinter 进度窗 + 先弹窗后协调
 """
 import sys, os, time, json, uuid, tempfile, subprocess, ctypes, threading, tkinter as tk
 
@@ -27,11 +27,19 @@ def main():
     if not os.path.exists(path):
         sys.exit(1)
 
+    name = os.path.basename(path) or path
+
+    # ---- 先弹确认（立即响应） ----
+    if not confirm(f"确定要永久删除「{name}」吗？\n\n此操作不可恢复！"):
+        sys.exit(0)
+
+    # ---- 再协调多实例 ----
     os.makedirs(QUEUE_DIR, exist_ok=True)
     my_id = uuid.uuid4().hex[:12]
     entry = {'id': my_id, 'path': path, 'ts': time.time()}
     with open(os.path.join(QUEUE_DIR, f'{my_id}.json'), 'w') as f:
         json.dump(entry, f)
+
     time.sleep(0.08 + (hash(path) & 0x3F) / 1000.0)
 
     all_entries = []
@@ -45,9 +53,12 @@ def main():
                             all_entries.append(d)
                 except:
                     pass
-    if not all_entries or entry['ts'] < max(e['ts'] for e in all_entries) - 0.15:
-        sys.exit(1)
 
+    # 不是 leader 就退出（leader 会处理队列中所有路径）
+    if not all_entries or entry['ts'] < max(e['ts'] for e in all_entries) - 0.15:
+        sys.exit(0)
+
+    # ---- leader: 收集所有路径 ----
     if os.path.isdir(QUEUE_DIR):
         for f in os.listdir(QUEUE_DIR):
             try: os.remove(os.path.join(QUEUE_DIR, f))
@@ -56,26 +67,18 @@ def main():
         except: pass
 
     valid_paths = [e['path'] for e in sorted(all_entries, key=lambda x: x['ts'])]
-    names = [os.path.basename(p) or p for p in valid_paths]
 
-    if len(names) == 1:
-        tip = f"确定要永久删除「{names[0]}」吗？\n\n此操作不可恢复！"
-    elif len(names) <= 8:
-        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n" + "\n".join(f"  • {n}" for n in names) + "\n\n此操作不可恢复！"
-    else:
-        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n" + "\n".join(f"  • {n}" for n in names[:8]) + f"\n  ……等 {len(names)} 项\n\n此操作不可恢复！"
-    if not confirm(tip):
+    if not valid_paths:
         sys.exit(0)
 
-    # ---- 进度窗（主线程 tkinter） ----
+    # ---- 进度窗 ----
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes('-topmost', True)
-    root.configure(bg='#ccc')  # 边框色
+    root.configure(bg='#ccc')
     root.geometry('302x62')
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     root.geometry(f'+{(sw-302)//2}+{(sh-62)//2}')
-    # 内层白色区域
     inner = tk.Frame(root, bg='white', bd=0)
     inner.pack(padx=1, pady=1, fill='both', expand=True)
     tk.Label(inner, text=f"⏳ 正在删除 {len(valid_paths)} 项…",
@@ -83,29 +86,29 @@ def main():
              ).pack(expand=True, fill='both')
 
     t0 = time.time()
-    result = []
+    done = [False]
 
     def do_delete():
         for p in valid_paths:
             try: delete_single(p)
             except: pass
-        result.append(True)
+        done[0] = True
 
     threading.Thread(target=do_delete, daemon=True).start()
 
-    def check_done():
-        if result:
-            elapse = time.time() - t0
-            if elapse >= MIN_DELAY:
-                root.destroy()
-                return
-            root.after(int((MIN_DELAY - elapse) * 1000), root.destroy)
-        else:
-            root.after(50, check_done)
+    def poll():
+        while not done[0]:
+            root.update()
+            time.sleep(0.03)
+        elapse = time.time() - t0
+        if elapse < MIN_DELAY:
+            time.sleep(MIN_DELAY - elapse)
+        root.destroy()
 
-    root.after(50, check_done)
+    threading.Thread(target=poll, daemon=True).start()
+
+    # 等 tkinter 窗口显示 + 删除完成
     root.mainloop()
-
     sys.exit(0)
 
 if __name__ == '__main__':
