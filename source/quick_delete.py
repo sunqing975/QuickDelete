@@ -1,7 +1,6 @@
 """
-QuickDelete v6 — 极速删除 (带确认)
-跳过回收站，直接永久删除文件/文件夹。
-右键菜单调用，Windows 原生支持，无窗口闪烁。
+QuickDelete v7 — 极速删除 (支持多选)
+接收多个文件/文件夹路径，一次确认，批量删除
 """
 import sys
 import os
@@ -23,47 +22,64 @@ def confirm(text, title="极速删除"):
     return ret == IDYES
 
 
-def quick_delete(path):
-    if not os.path.exists(path):
-        msgbox(f"路径不存在:\n{path}", "极速删除", 0x10)
-        return 1
-
-    is_dir = os.path.isdir(path)
-    name = os.path.basename(path) or path
-
-    if is_dir:
-        tip = f"确定要永久删除文件夹「{name}」吗？\n\n此操作不可恢复！"
+def delete_single(path):
+    """删除单个文件或文件夹，返回 True=成功"""
+    if os.path.isdir(path):
+        cmd = f'Remove-Item -LiteralPath "{path}" -Force -Recurse -ErrorAction Stop'
     else:
-        tip = f"确定要永久删除文件「{name}」吗？\n\n此操作不可恢复！"
+        cmd = f'Remove-Item -LiteralPath "{path}" -Force -ErrorAction Stop'
+
+    proc = subprocess.Popen(
+        ['powershell', '-NoProfile', '-Command', cmd],
+        shell=False,
+        creationflags=CREATE_NO_WINDOW
+    )
+    proc.wait(timeout=60)
+    return not os.path.exists(path)
+
+
+def main():
+    paths = sys.argv[1:]
+    if not paths:
+        sys.exit(1)
+
+    # 过滤掉不存在的路径
+    valid_paths = [p for p in paths if os.path.exists(p)]
+    if not valid_paths:
+        msgbox("选中的文件/文件夹不存在", "极速删除", 0x10)
+        sys.exit(1)
+
+    # 构建确认信息
+    names = [os.path.basename(p) or p for p in valid_paths]
+    if len(names) == 1:
+        tip = f"确定要永久删除「{names[0]}」吗？\n\n此操作不可恢复！"
+    elif len(names) <= 5:
+        lines = "\n".join(f"  • {n}" for n in names)
+        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n{lines}\n\n此操作不可恢复！"
+    else:
+        lines = "\n".join(f"  • {n}" for n in names[:5])
+        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n{lines}\n  • ……等 {len(names)} 项\n\n此操作不可恢复！"
 
     if not confirm(tip):
-        return 0
+        sys.exit(0)
 
-    try:
-        ps_cmd = f'Remove-Item -LiteralPath "{path}" -Force -Recurse -ErrorAction Stop'
-        proc = subprocess.Popen(
-            ['powershell', '-NoProfile', '-Command', ps_cmd],
-            shell=False,
-            creationflags=CREATE_NO_WINDOW
-        )
-        proc.wait(timeout=60)
+    # 批量删除
+    failed = []
+    for path in valid_paths:
+        try:
+            if not delete_single(path):
+                failed.append(path)
+        except subprocess.TimeoutExpired:
+            failed.append(f"{path} (超时)")
+        except Exception as e:
+            failed.append(f"{path} ({str(e)})")
 
-        if not os.path.exists(path):
-            return 0
-        else:
-            msgbox(f"删除失败，可能权限不足或文件被占用:\n{path}", "极速删除", 0x10)
-            return 1
+    if failed:
+        msgbox(f"以下项目删除失败:\n" + "\n".join(failed), "极速删除", 0x10)
+        sys.exit(1)
 
-    except subprocess.TimeoutExpired:
-        msgbox(f"删除超时(>60s):\n{path}", "极速删除", 0x10)
-        return 1
-    except Exception as e:
-        msgbox(f"错误:\n{str(e)}", "极速删除", 0x10)
-        return 1
+    sys.exit(0)
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        sys.exit(1)
-    path = sys.argv[1].strip('"').strip("'")
-    sys.exit(quick_delete(path))
+    main()
