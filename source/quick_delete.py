@@ -1,5 +1,6 @@
 """
-QuickDelete v12 — 极速删除 (无完成弹窗)
+QuickDelete v13 — 极速删除
+单文件无进度；多文件简洁进度窗
 """
 import sys, os, time, json, uuid, tempfile, subprocess, ctypes
 
@@ -9,27 +10,26 @@ MB_ICONWARNING = 0x30
 IDYES = 6
 QUEUE_DIR = os.path.join(tempfile.gettempdir(), 'QDQueue')
 
-def msg(text, icon=0x10):
-    ctypes.windll.user32.MessageBoxW(0, text, "极速删除", icon)
-
 def confirm(text):
     return ctypes.windll.user32.MessageBoxW(0, text, "极速删除", MB_YESNO | MB_ICONWARNING) == IDYES
 
 def show_progress(text):
+    """无边框简洁进度窗"""
     safe = text.replace('"', '\\"')
     ps = f'''
     Add-Type -AssemblyName PresentationFramework
     $w=New-Object Windows.Window
-    $w.Title="极速删除";$w.Width=380;$w.Height=110
-    $w.WindowStartupLocation="CenterScreen"
-    $w.Topmost=$true;$w.WindowStyle="ToolWindow"
+    $w.WindowStyle="None";$w.AllowsTransparency=$true
+    $w.Background="#FFF";$w.Width=280;$w.Height=55
+    $w.Topmost=$true;$w.WindowStartupLocation="CenterScreen"
     $w.ResizeMode="NoResize"
-    $s=New-Object Windows.Controls.StackPanel;$s.Margin="15"
-    $t=New-Object Windows.Controls.TextBlock
-    $t.Text="{safe}";$t.FontSize=15
-    $t.HorizontalAlignment="Center";$t.VerticalAlignment="Center"
-    $t.TextWrapping="WrapWithOverflow"
-    $s.Children.Add($t);$w.Content=$s
+    $b=New-Object Windows.Controls.Border
+    $b.CornerRadius="8";$b.BorderBrush="#CCC";$b.BorderThickness="1"
+    $b.Background="#FAFAFA"
+    $l=New-Object Windows.Controls.Label
+    $l.Content="{safe}";$l.FontSize=14
+    $l.HorizontalAlignment="Center";$l.VerticalAlignment="Center"
+    $b.Child=$l;$w.Content=$b
     $w.Show()|Out-Null
     Start-Sleep -Seconds 9999
     '''
@@ -76,8 +76,7 @@ def main():
     if not all_entries:
         sys.exit(1)
 
-    my_ts = entry['ts']
-    if my_ts < max(e['ts'] for e in all_entries) - 0.15:
+    if entry['ts'] < max(e['ts'] for e in all_entries) - 0.15:
         sys.exit(0)
 
     # leader: 清理队列
@@ -91,28 +90,32 @@ def main():
     valid_paths = [e['path'] for e in sorted(all_entries, key=lambda x: x['ts'])]
     names = [os.path.basename(p) or p for p in valid_paths]
 
+    # 确认框
     if len(names) == 1:
         tip = f"确定要永久删除「{names[0]}」吗？\n\n此操作不可恢复！"
     elif len(names) <= 8:
         tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n" + "\n".join(f"  • {n}" for n in names) + "\n\n此操作不可恢复！"
     else:
         tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n" + "\n".join(f"  • {n}" for n in names[:8]) + f"\n  ……等 {len(names)} 项\n\n此操作不可恢复！"
-
     if not confirm(tip):
         sys.exit(0)
 
-    progress = show_progress(f"正在删除 {len(valid_paths)} 项…\n请稍候")
+    # 多文件→进度窗；单文件→静默删（太快了弹窗没必要）
+    progress = None
+    if len(valid_paths) > 1:
+        progress = show_progress(f"⏳ 正在删除 {len(valid_paths)} 项…")
+
     for p in valid_paths:
         try: delete_single(p)
         except: pass
 
-    try:
-        progress.kill()
-        progress.wait(timeout=3)
-    except:
-        pass
+    if progress:
+        try:
+            progress.kill()
+            progress.wait(timeout=3)
+        except:
+            pass
 
-    # 不弹完成窗，直接退出
     sys.exit(0)
 
 if __name__ == '__main__':
