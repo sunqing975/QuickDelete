@@ -32,7 +32,7 @@ def main():
     entry = {'id': my_id, 'path': path, 'ts': time.time()}
     with open(os.path.join(QUEUE_DIR, f'{my_id}.json'), 'w') as f:
         json.dump(entry, f)
-    time.sleep(0.3 + (hash(path) & 0xFF) / 1000.0)
+    time.sleep(0.08 + (hash(path) & 0x3F) / 1000.0)
 
     all_entries = []
     if os.path.isdir(QUEUE_DIR):
@@ -71,11 +71,14 @@ def main():
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes('-topmost', True)
-    root.configure(bg='white')
-    root.geometry('300x60')
+    root.configure(bg='#ccc')  # 边框色
+    root.geometry('302x62')
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    root.geometry(f'+{(sw-300)//2}+{(sh-60)//2}')
-    tk.Label(root, text=f"⏳ 正在删除 {len(valid_paths)} 项…",
+    root.geometry(f'+{(sw-302)//2}+{(sh-62)//2}')
+    # 内层白色区域
+    inner = tk.Frame(root, bg='white', bd=0)
+    inner.pack(padx=1, pady=1, fill='both', expand=True)
+    tk.Label(inner, text=f"⏳ 正在删除 {len(valid_paths)} 项…",
              font=("Microsoft YaHei", 13, "bold"), bg='white', fg='#333'
              ).pack(expand=True, fill='both')
 
