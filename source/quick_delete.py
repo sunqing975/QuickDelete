@@ -1,7 +1,7 @@
 """
-QuickDelete v16 — tkinter 进度窗，无外部进程不闪屏
+QuickDelete v17 — tkinter 主线程进度窗
 """
-import sys, os, time, json, uuid, tempfile, subprocess, ctypes, threading, tkinter as tk
+import sys, os, time, json, uuid, tempfile, subprocess, ctypes, tkinter as tk
 
 CREATE_NO_WINDOW = 0x08000000
 MB_YESNO = 0x04
@@ -45,11 +45,9 @@ def main():
                             all_entries.append(d)
                 except:
                     pass
-
     if not all_entries or entry['ts'] < max(e['ts'] for e in all_entries) - 0.15:
         sys.exit(1)
 
-    # 清理队列
     if os.path.isdir(QUEUE_DIR):
         for f in os.listdir(QUEUE_DIR):
             try: os.remove(os.path.join(QUEUE_DIR, f))
@@ -60,7 +58,6 @@ def main():
     valid_paths = [e['path'] for e in sorted(all_entries, key=lambda x: x['ts'])]
     names = [os.path.basename(p) or p for p in valid_paths]
 
-    # 确认
     if len(names) == 1:
         tip = f"确定要永久删除「{names[0]}」吗？\n\n此操作不可恢复！"
     elif len(names) <= 8:
@@ -70,7 +67,7 @@ def main():
     if not confirm(tip):
         sys.exit(0)
 
-    # ---- 进度窗 ----
+    # ---- 进度窗（主线程 tkinter） ----
     root = tk.Tk()
     root.overrideredirect(True)
     root.attributes('-topmost', True)
@@ -83,24 +80,29 @@ def main():
              ).pack(expand=True, fill='both')
 
     t0 = time.time()
-    state = [False]
-    def poll():
-        while not state[0]:
-            root.update()
-            time.sleep(0.03)
-    threading.Thread(target=poll, daemon=True).start()
+    result = []
 
-    # 删除
-    for p in valid_paths:
-        try: delete_single(p)
-        except: pass
+    def do_delete():
+        for p in valid_paths:
+            try: delete_single(p)
+            except: pass
+        result.append(True)
 
-    # 关窗（保证至少显示 MIN_DELAY 秒）
-    state[0] = True
-    elapse = time.time() - t0
-    if elapse < MIN_DELAY:
-        time.sleep(MIN_DELAY - elapse)
-    root.destroy()
+    threading.Thread(target=do_delete, daemon=True).start()
+
+    def check_done():
+        if result:
+            elapse = time.time() - t0
+            if elapse >= MIN_DELAY:
+                root.destroy()
+                return
+            root.after(int((MIN_DELAY - elapse) * 1000), root.destroy)
+        else:
+            root.after(50, check_done)
+
+    root.after(50, check_done)
+    root.mainloop()
+
     sys.exit(0)
 
 if __name__ == '__main__':
