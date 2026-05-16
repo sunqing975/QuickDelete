@@ -31,8 +31,8 @@ def show_progress(text):
     $w.ShowDialog()|Out-Null
     '''
     return subprocess.Popen(
-        ['powershell', '-NoProfile', '-Command', ps],
-        shell=False, creationflags=CREATE_NO_WINDOW
+        ['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command', ps],
+        shell=False
     )
 
 def delete_single(path):
