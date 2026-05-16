@@ -1,85 +1,119 @@
 """
-QuickDelete v7 — 极速删除 (支持多选)
-接收多个文件/文件夹路径，一次确认，批量删除
+QuickDelete v12 — 极速删除 (无完成弹窗)
 """
-import sys
-import os
-import subprocess
-import ctypes
+import sys, os, time, json, uuid, tempfile, subprocess, ctypes
 
 CREATE_NO_WINDOW = 0x08000000
 MB_YESNO = 0x04
 MB_ICONWARNING = 0x30
 IDYES = 6
+QUEUE_DIR = os.path.join(tempfile.gettempdir(), 'QDQueue')
 
+def msg(text, icon=0x10):
+    ctypes.windll.user32.MessageBoxW(0, text, "极速删除", icon)
 
-def msgbox(text, title="极速删除", icon=0x10):
-    ctypes.windll.user32.MessageBoxW(0, text, title, icon)
+def confirm(text):
+    return ctypes.windll.user32.MessageBoxW(0, text, "极速删除", MB_YESNO | MB_ICONWARNING) == IDYES
 
-
-def confirm(text, title="极速删除"):
-    ret = ctypes.windll.user32.MessageBoxW(0, text, title, MB_YESNO | MB_ICONWARNING)
-    return ret == IDYES
-
+def show_progress(text):
+    safe = text.replace('"', '\\"')
+    ps = f'''
+    Add-Type -AssemblyName PresentationFramework
+    $w=New-Object Windows.Window
+    $w.Title="极速删除";$w.Width=380;$w.Height=110
+    $w.WindowStartupLocation="CenterScreen"
+    $w.Topmost=$true;$w.WindowStyle="ToolWindow"
+    $w.ResizeMode="NoResize"
+    $s=New-Object Windows.Controls.StackPanel;$s.Margin="15"
+    $t=New-Object Windows.Controls.TextBlock
+    $t.Text="{safe}";$t.FontSize=15
+    $t.HorizontalAlignment="Center";$t.VerticalAlignment="Center"
+    $t.TextWrapping="WrapWithOverflow"
+    $s.Children.Add($t);$w.Content=$s
+    $w.Show()|Out-Null
+    Start-Sleep -Seconds 9999
+    '''
+    return subprocess.Popen(
+        ['powershell', '-NoProfile', '-Command', ps],
+        shell=False, creationflags=CREATE_NO_WINDOW
+    )
 
 def delete_single(path):
-    """删除单个文件或文件夹，返回 True=成功"""
-    if os.path.isdir(path):
-        cmd = f'Remove-Item -LiteralPath "{path}" -Force -Recurse -ErrorAction Stop'
-    else:
-        cmd = f'Remove-Item -LiteralPath "{path}" -Force -ErrorAction Stop'
-
-    proc = subprocess.Popen(
-        ['powershell', '-NoProfile', '-Command', cmd],
-        shell=False,
-        creationflags=CREATE_NO_WINDOW
-    )
-    proc.wait(timeout=60)
+    cmd = f'Remove-Item -LiteralPath "{path}" -Force -Recurse -ErrorAction Stop'
+    p = subprocess.Popen(['powershell', '-NoProfile', '-Command', cmd],
+                         shell=False, creationflags=CREATE_NO_WINDOW)
+    p.wait(timeout=300)
     return not os.path.exists(path)
 
-
 def main():
-    paths = sys.argv[1:]
-    if not paths:
+    args = sys.argv[1:]
+    if not args:
+        sys.exit(1)
+    path = args[0].strip('"')
+    if not os.path.exists(path):
         sys.exit(1)
 
-    # 过滤掉不存在的路径
-    valid_paths = [p for p in paths if os.path.exists(p)]
-    if not valid_paths:
-        msgbox("选中的文件/文件夹不存在", "极速删除", 0x10)
+    os.makedirs(QUEUE_DIR, exist_ok=True)
+    my_id = uuid.uuid4().hex[:12]
+    entry = {'id': my_id, 'path': path, 'ts': time.time()}
+    with open(os.path.join(QUEUE_DIR, f'{my_id}.json'), 'w') as f:
+        json.dump(entry, f)
+
+    time.sleep(0.3 + (hash(path) & 0xFF) / 1000.0)
+
+    all_entries = []
+    if os.path.isdir(QUEUE_DIR):
+        for fn in sorted(os.listdir(QUEUE_DIR)):
+            if fn.endswith('.json'):
+                try:
+                    with open(os.path.join(QUEUE_DIR, fn)) as f:
+                        d = json.load(f)
+                        if os.path.exists(d['path']):
+                            all_entries.append(d)
+                except:
+                    pass
+
+    if not all_entries:
         sys.exit(1)
 
-    # 构建确认信息
+    my_ts = entry['ts']
+    if my_ts < max(e['ts'] for e in all_entries) - 0.15:
+        sys.exit(0)
+
+    # leader: 清理队列
+    if os.path.isdir(QUEUE_DIR):
+        for f in os.listdir(QUEUE_DIR):
+            try: os.remove(os.path.join(QUEUE_DIR, f))
+            except: pass
+        try: os.rmdir(QUEUE_DIR)
+        except: pass
+
+    valid_paths = [e['path'] for e in sorted(all_entries, key=lambda x: x['ts'])]
     names = [os.path.basename(p) or p for p in valid_paths]
+
     if len(names) == 1:
         tip = f"确定要永久删除「{names[0]}」吗？\n\n此操作不可恢复！"
-    elif len(names) <= 5:
-        lines = "\n".join(f"  • {n}" for n in names)
-        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n{lines}\n\n此操作不可恢复！"
+    elif len(names) <= 8:
+        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n" + "\n".join(f"  • {n}" for n in names) + "\n\n此操作不可恢复！"
     else:
-        lines = "\n".join(f"  • {n}" for n in names[:5])
-        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n{lines}\n  • ……等 {len(names)} 项\n\n此操作不可恢复！"
+        tip = f"确定要永久删除以下 {len(names)} 项吗？\n\n" + "\n".join(f"  • {n}" for n in names[:8]) + f"\n  ……等 {len(names)} 项\n\n此操作不可恢复！"
 
     if not confirm(tip):
         sys.exit(0)
 
-    # 批量删除
-    failed = []
-    for path in valid_paths:
-        try:
-            if not delete_single(path):
-                failed.append(path)
-        except subprocess.TimeoutExpired:
-            failed.append(f"{path} (超时)")
-        except Exception as e:
-            failed.append(f"{path} ({str(e)})")
+    progress = show_progress(f"正在删除 {len(valid_paths)} 项…\n请稍候")
+    for p in valid_paths:
+        try: delete_single(p)
+        except: pass
 
-    if failed:
-        msgbox(f"以下项目删除失败:\n" + "\n".join(failed), "极速删除", 0x10)
-        sys.exit(1)
+    try:
+        progress.kill()
+        progress.wait(timeout=3)
+    except:
+        pass
 
+    # 不弹完成窗，直接退出
     sys.exit(0)
-
 
 if __name__ == '__main__':
     main()
