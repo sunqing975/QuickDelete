@@ -1,5 +1,5 @@
 """
-QuickDelete v18 — tkinter 进度窗 + 先弹窗后协调
+QuickDelete v19 — tkinter 进度窗 + 先协调后弹窗（多实例合并确认）
 """
 import sys, os, time, json, uuid, tempfile, subprocess, ctypes, threading, tkinter as tk
 
@@ -27,13 +27,7 @@ def main():
     if not os.path.exists(path):
         sys.exit(1)
 
-    name = os.path.basename(path) or path
-
-    # ---- 先弹确认（立即响应） ----
-    if not confirm(f"确定要永久删除「{name}」吗？\n\n此操作不可恢复！"):
-        sys.exit(0)
-
-    # ---- 再协调多实例 ----
+    # ---- 先协调多实例 ----
     os.makedirs(QUEUE_DIR, exist_ok=True)
     my_id = uuid.uuid4().hex[:12]
     entry = {'id': my_id, 'path': path, 'ts': time.time()}
@@ -58,7 +52,7 @@ def main():
     if not all_entries or entry['ts'] < max(e['ts'] for e in all_entries) - 0.15:
         sys.exit(0)
 
-    # ---- leader: 收集所有路径 ----
+    # ---- leader: 清理队列 + 收集所有路径 ----
     if os.path.isdir(QUEUE_DIR):
         for f in os.listdir(QUEUE_DIR):
             try: os.remove(os.path.join(QUEUE_DIR, f))
@@ -67,8 +61,12 @@ def main():
         except: pass
 
     valid_paths = [e['path'] for e in sorted(all_entries, key=lambda x: x['ts'])]
-
     if not valid_paths:
+        sys.exit(0)
+
+    # ---- 弹确认（此时已合并所有实例路径） ----
+    name_list = '\n'.join(f'- {os.path.basename(p) or p}' for p in valid_paths)
+    if not confirm(f"确定要永久删除以下 {len(valid_paths)} 项吗？\n\n{name_list}"):
         sys.exit(0)
 
     # ---- 进度窗 ----
@@ -107,7 +105,6 @@ def main():
 
     threading.Thread(target=poll, daemon=True).start()
 
-    # 等 tkinter 窗口显示 + 删除完成
     root.mainloop()
     sys.exit(0)
 

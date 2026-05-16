@@ -3,5 +3,6 @@ __pycache__/
 *.spec
 build/
 dist/
+*.exe
 .DS_Store
 Thumbs.db
