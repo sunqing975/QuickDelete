@@ -14,24 +14,21 @@ def confirm(text):
     return ctypes.windll.user32.MessageBoxW(0, text, "极速删除", MB_YESNO | MB_ICONWARNING) == IDYES
 
 def show_progress(text):
-    """无边框简洁进度窗"""
+    """无边框进度窗 (用 ShowDialog 阻塞等杀进程)"""
     safe = text.replace('"', '\\"')
     ps = f'''
     Add-Type -AssemblyName PresentationFramework
     $w=New-Object Windows.Window
-    $w.WindowStyle="None";$w.AllowsTransparency=$true
-    $w.Background="#FFF";$w.Width=280;$w.Height=55
-    $w.Topmost=$true;$w.WindowStartupLocation="CenterScreen"
-    $w.ResizeMode="NoResize"
-    $b=New-Object Windows.Controls.Border
-    $b.CornerRadius="8";$b.BorderBrush="#CCC";$b.BorderThickness="1"
-    $b.Background="#FAFAFA"
+    $w.WindowStyle=[Windows.WindowStyle]::None
+    $w.AllowsTransparency=$true
+    $w.Width=280;$w.Height=55
+    $w.Topmost=$true
+    $w.WindowStartupLocation=[Windows.WindowStartupLocation]::CenterScreen
     $l=New-Object Windows.Controls.Label
     $l.Content="{safe}";$l.FontSize=14
     $l.HorizontalAlignment="Center";$l.VerticalAlignment="Center"
-    $b.Child=$l;$w.Content=$b
-    $w.Show()|Out-Null
-    Start-Sleep -Seconds 9999
+    $w.Content=$l
+    $w.ShowDialog()|Out-Null
     '''
     return subprocess.Popen(
         ['powershell', '-NoProfile', '-Command', ps],
