@@ -1,7 +1,7 @@
 """
 QuickDelete v17 — tkinter 主线程进度窗
 """
-import sys, os, time, json, uuid, tempfile, subprocess, ctypes, tkinter as tk
+import sys, os, time, json, uuid, tempfile, subprocess, ctypes, threading, tkinter as tk
 
 CREATE_NO_WINDOW = 0x08000000
 MB_YESNO = 0x04
